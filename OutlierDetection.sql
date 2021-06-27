@@ -1,9 +1,11 @@
 drop function OutlierDetection;
 
 CREATE OR REPLACE FUNCTION OutlierDetection (table_name varchar(63),
+                                             save_as varchar(63) default 'NULL' ,
 											 method varchar(63) default 'OCSVM',
-											 target varchar(63) default 'NULL')				
-RETURNS SETOF INT
+											 target varchar(63) default 'NULL',
+                                             index_column varchar(63) default 'NULL')				
+RETURNS SETOF text
 AS $$
     import numpy as np
     import pandas as pd
@@ -49,13 +51,44 @@ AS $$
     else:
         raise TypeError("No such method!")
         
-    return np.array(np.where(index == -1))[0].tolist()
+    out_index =  np.array(np.where(index == -1))[0].tolist()
+    non_out_index = np.array(np.where(index != -1))[0].tolist()
+    df = df.iloc[non_out_index]
+
+    ###save table
+    if save_as != 'NULL':
+        sql_command = 'CREATE TABLE {out_table} (LIKE {in_table});'.format(out_table=save_as, in_table=table_name)
+        plpy.execute(sql_command)
+
+        sql_command = 'select column_name, data_type from information_schema.columns where table_name = \'{out_table}\';'.format(out_table=save_as)
+        col_name_type = plpy.execute(sql_command)
+        col_name_type = pd.DataFrame.from_records(col_name_type)
+        col_names = col_name_type['column_name'].tolist()
+        col_types = col_name_type['data_type'].tolist()
+
+        ### reorder the columns to match what is return from schema
+        df = df.reindex(columns=col_names)
+        df = df.to_numpy().tolist()
+
+        sql_command = 'INSERT INTO {out_table} ({c_names}) values ({cols});'.format(out_table=save_as, c_names=','.join(col_names), cols=','.join(['$'+str(i) for i in range(1,len(col_names)+1)]))
+        plan = plpy.prepare(sql_command, col_types)
+        for row in df:
+            plpy.execute(plan, row)
+
+    ### return outlier's values in index column         
+    if index_column=='NULL':
+        return out_index
+    else:
+        return df[index_column].iloc[out_index].to_list()
 	
 $$ LANGUAGE plpython3u;
 
 --test function
-select OutlierDetection('Boston', 'DBSCAN', 'PRICE'); 
+select OutlierDetection('Boston_miss_filled','row_selected','DBSCAN', 'price'); 
 
---drop outlier with method = 'DBSCAN', target = 'PRICE'
-select * from Boston where index not in((select OutlierDetection('Boston', 'OCSVM'))); 
+--add unique row_idx
+alter table Boston add unique_id serial;
+
+select * from Boston
+where unique_id not in ((select OutlierDetection('Boston', 'OCSVM'))); 
 
