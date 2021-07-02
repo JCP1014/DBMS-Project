@@ -88,6 +88,7 @@ AS $$
     return feature_names
 
 $$ LANGUAGE plpython3u;
-SELECT RFE('boston', 'selected_view', 'price', 'GradientBoostingRegressor');
+SELECT RFE('boston', 'selected_view', 'price', 'ExtraTreesRegressor');
 
 DROP FUNCTION RFE(character varying, character varying, character varying, text, real, real, integer, text);
+DROP VIEW selected_view;
